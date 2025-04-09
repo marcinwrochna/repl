@@ -126,6 +126,7 @@ structure CommandResponse where
   sorries : List Sorry := []
   tactics : List Tactic := []
   infotree : Option Json := none
+  syntaxtrees : Option Json := none
 deriving FromJson
 
 def Json.nonemptyList [ToJson α] (k : String) : List α → List (String × Json)
@@ -138,7 +139,8 @@ instance : ToJson CommandResponse where
     Json.nonemptyList "messages" r.messages,
     Json.nonemptyList "sorries" r.sorries,
     Json.nonemptyList "tactics" r.tactics,
-    match r.infotree with | some j => [("infotree", j)] | none => []
+    match r.infotree with | some j => [("infotree", j)] | none => [],
+    match r.syntaxtrees with | some j => [("syntaxtrees", j)] | none => []
   ]
 
 /--
