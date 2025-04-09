@@ -251,10 +251,13 @@ def runCommand (s : Command) : M IO (CommandResponse ⊕ Error) := do
   if notFound then
     return .inr ⟨"Unknown environment."⟩
   let initialCmdState? := cmdSnapshot?.map fun c => c.cmdState
-  let (cmdState, messages, trees) ← try
+  let (frontendState, headerSyntax) ← try
     IO.processInput s.cmd initialCmdState?
   catch ex =>
     return .inr ⟨ex.toString⟩
+  let cmdState := frontendState.commandState
+  let messages := cmdState.messages.toList
+  let trees := cmdState.infoState.trees.toList
   let messages ← messages.mapM fun m => Message.of m
   -- For debugging purposes, sometimes we print out the trees here:
   -- trees.forM fun t => do IO.println (← t.format)
@@ -266,7 +269,7 @@ def runCommand (s : Command) : M IO (CommandResponse ⊕ Error) := do
   | some true => tactics trees
   | _ => pure []
   let cmdSnapshot :=
-  { cmdState
+  { cmdState := cmdState
     cmdContext := (cmdSnapshot?.map fun c => c.cmdContext).getD
       { fileName := "",
         fileMap := default,
@@ -283,12 +286,18 @@ def runCommand (s : Command) : M IO (CommandResponse ⊕ Error) := do
     pure none
   else
     pure <| some <| Json.arr (← jsonTrees.toArray.mapM fun t => t.toJson none)
+  let commandsSyntaxTrees := frontendState.commands /- .pop -/
+  let syntaxTrees : Array Syntax := match headerSyntax with
+    | some stx => #[stx] ++ commandsSyntaxTrees
+    | none => commandsSyntaxTrees
   return .inl
     { env,
       messages,
       sorries,
-      tactics
-      infotree }
+      tactics,
+      infotree,
+      syntaxtrees := none }
+      -- syntaxtrees := Lean.toJson syntaxTrees}
 
 def processFile (s : File) : M IO (CommandResponse ⊕ Error) := do
   try
@@ -375,7 +384,7 @@ where loop : M IO Unit := do
   if query = "" then
     return ()
   if query.startsWith "#" || query.startsWith "--" then loop else
-  IO.println <| toString <| ← match ← parse query with
+  IO.println <| Json.compress <| ← match ← parse query with
   | .command r => return toJson (← runCommand r)
   | .file r => return toJson (← processFile r)
   | .proofStep r => return toJson (← runProofStep r)
