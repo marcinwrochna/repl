@@ -251,33 +251,42 @@ def runCommand (s : Command) : M IO (CommandResponse ⊕ Error) := do
   if notFound then
     return .inr ⟨"Unknown environment."⟩
   let initialCmdState? := cmdSnapshot?.map fun c => c.cmdState
+
+  -- Parse and execute the commands.
   let (frontendState, headerSyntax) ← try
     IO.processInput s.cmd initialCmdState?
   catch ex =>
     return .inr ⟨ex.toString⟩
   let cmdState := frontendState.commandState
-  let messages := cmdState.messages.toList
-  let trees := cmdState.infoState.trees.toList
-  let messages ← messages.mapM fun m => Message.of m
-  -- For debugging purposes, sometimes we print out the trees here:
-  -- trees.forM fun t => do IO.println (← t.format)
-  let sorries ← sorries trees (initialCmdState?.map (·.env)) none
-  let sorries ← match s.rootGoals with
-  | some true => pure (sorries ++ (← collectRootGoalsAsSorries trees))
-  | _ => pure sorries
-  let tactics ← match s.allTactics with
-  | some true => tactics trees
-  | _ => pure []
+
+  -- Make a snapshot of the state.
   let cmdSnapshot :=
   { cmdState := cmdState
     cmdContext := (cmdSnapshot?.map fun c => c.cmdContext).getD
-      { fileName := "",
+      { fileName := "", -- TODO the default initial cmdContext perhaps misses e.g. options?
         fileMap := default,
         snap? := none,
         cancelTk? := none } }
   let env ← recordCommandSnapshot cmdSnapshot
+
+  -- Retrieve messages.
+  let messages := cmdState.messages.toList
+  let messages ← messages.mapM fun m => Message.of m
+
+  -- Retrieve tactics and sorries.
+  let trees := cmdState.infoState.trees.toList
+  -- For debugging purposes, sometimes we print out the trees here:
+  -- trees.forM fun t => do IO.println (← t.format)
+  let sorries ← sorries trees (initialCmdState?.map (·.env)) none
+  let sorries ← if s.rootGoals.isEqSome true
+    then pure (sorries ++ (← collectRootGoalsAsSorries trees))
+    else pure sorries
+  let tactics ← if s.allTactics.isEqSome true then tactics trees else pure []
+
+  -- Retrieve infotrees, or some subset of them, if requested.
   let jsonTrees := match s.infotree with
   | some "full" => trees
+  | some "declarations" => trees.flatMap InfoTree.retainDeclarations
   | some "tactics" => trees.flatMap InfoTree.retainTacticInfo
   | some "original" => trees.flatMap InfoTree.retainTacticInfo |>.flatMap InfoTree.retainOriginal
   | some "substantive" => trees.flatMap InfoTree.retainTacticInfo |>.flatMap InfoTree.retainSubstantive
@@ -286,18 +295,40 @@ def runCommand (s : Command) : M IO (CommandResponse ⊕ Error) := do
     pure none
   else
     pure <| some <| Json.arr (← jsonTrees.toArray.mapM fun t => t.toJson none)
-  let commandsSyntaxTrees := frontendState.commands /- .pop -/
-  let syntaxTrees : Array Syntax := match headerSyntax with
-    | some stx => #[stx] ++ commandsSyntaxTrees
-    | none => commandsSyntaxTrees
+
+  -- Retrieve the full raw Syntax trees if requested.
+  -- (Note that usually it's more useful to access syntax from nodes in infotrees,
+  --  as they associate specific syntax to the 'semantic' infotree nodes;
+  --  however, dumping those for each node would results in humongous quadratic length,
+  --  since every node points to syntax for the whole subtree).
+  let syntaxTrees : Option Json :=
+    if s.syntaxTrees.isEqSome true then
+      some $ Lean.toJson $ match headerSyntax with
+        | some stx => #[stx] ++ frontendState.commands
+        | none => frontendState.commands
+    else
+      none
+
+  -- Retrieve constants (theorems, defs, ..) if requested.
+  let constants ←
+    if s.constants.isEqSome true then
+      let moduleData ← Lean.mkModuleData cmdState.env
+      let ctxInfo: ContextInfo := { env := cmdState.env, fileMap := default , ngen := cmdState.ngen }
+      -- let ctxInfo : Option ContextInfo := match trees.toArray.back! with
+      --   | .context c _ => (c.mergeIntoOuter? none)
+      --   | _ => none
+      pure $ some $ Lean.toJson (← constantsToJson moduleData.constants ctxInfo)
+    else
+      pure none
+
   return .inl
     { env,
       messages,
       sorries,
       tactics,
       infotree,
-      syntaxtrees := none }
-      -- syntaxtrees := Lean.toJson syntaxTrees}
+      syntaxTrees,
+      constants }
 
 def processFile (s : File) : M IO (CommandResponse ⊕ Error) := do
   try

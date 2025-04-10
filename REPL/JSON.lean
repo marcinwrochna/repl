@@ -15,10 +15,13 @@ structure CommandOptions where
   allTactics : Option Bool := none
   rootGoals : Option Bool := none
   /--
-  Should be "full", "tactics", "original", or "substantive".
+  Should be "full", "declarations", "tactics", "original", or "substantive".
   Anything else is ignored.
   -/
-  infotree : Option String
+  infotree : Option String := none
+  syntaxTrees: Option Bool := none
+  constants: Option Bool := none
+
 
 /-- Run Lean commands.
 If `env = none`, starts a new session (in which you can use `import`).
@@ -126,12 +129,17 @@ structure CommandResponse where
   sorries : List Sorry := []
   tactics : List Tactic := []
   infotree : Option Json := none
-  syntaxtrees : Option Json := none
+  syntaxTrees : Option Json := none
+  constants : Option Json := none
 deriving FromJson
 
 def Json.nonemptyList [ToJson α] (k : String) : List α → List (String × Json)
   | [] => []
   | l  => [⟨k, toJson l⟩]
+
+def Json.ifSome [ToJson α] (k : String) : Option α → List (String × Json)
+  | none => []
+  | some a => [⟨k, toJson a⟩]
 
 instance : ToJson CommandResponse where
   toJson r := Json.mkObj <| .flatten [
@@ -139,8 +147,9 @@ instance : ToJson CommandResponse where
     Json.nonemptyList "messages" r.messages,
     Json.nonemptyList "sorries" r.sorries,
     Json.nonemptyList "tactics" r.tactics,
-    match r.infotree with | some j => [("infotree", j)] | none => [],
-    match r.syntaxtrees with | some j => [("syntaxtrees", j)] | none => []
+    Json.ifSome "infotree" r.infotree,
+    Json.ifSome "syntaxTrees" r.syntaxTrees,
+    Json.ifSome "constants" r.constants,
   ]
 
 /--
