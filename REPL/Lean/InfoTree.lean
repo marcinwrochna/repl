@@ -144,6 +144,12 @@ partial def filter (p : Info → Bool) (m : MVarId → Bool := fun _ => false) :
 partial def retainTacticInfo (tree : InfoTree) : List InfoTree :=
   tree.filter fun | .ofTacticInfo _ => true | _ => false
 
+/-- Discard all nodes besides `CommmandInfo` nodes with declarations. -/
+partial def retainDeclarations (tree : InfoTree) : List InfoTree :=
+  tree.filter fun
+  | .ofCommandInfo i => i.elaborator == ``Lean.Elab.Command.elabDeclaration
+  | _ => false
+
 /-- Retain only nodes with "original" syntax. -/
 partial def retainOriginal (tree : InfoTree) : List InfoTree :=
   tree.filter Info.isOriginal
