@@ -15,22 +15,26 @@ If there is no existing environment, we parse the input for headers (e.g. import
 and create a new environment.
 Otherwise, we add to the existing environment.
 
-Returns the resulting FrontendState, along with the header Syntax (if there was one).
+Returns:
+1. The resulting command state after processing the entire input
+2. The header-only command state (only useful when cmdState? is none)
+3. The header Syntax (if there was one).
 -/
 def processInput (input : String) (cmdState? : Option Command.State)
     (opts : Options := {}) (fileName : Option String := none) :
-    IO (Frontend.State × Option Syntax) := unsafe do
+    IO (Frontend.State × Command.State × Option Syntax) := unsafe do
   Lean.initSearchPath (← Lean.findSysroot)
   enableInitializersExecution
   let fileName   := fileName.getD "<input>"
   let inputCtx   := Parser.mkInputContext input fileName
-  let (parserState, commandState, headerSyntax) ← match cmdState? with
+  let (parserState, beforeCommandState, headerSyntax) ← match cmdState? with
   | none => do
-    let (header, parserState, messages) ← Parser.parseHeader inputCtx
-    let (env, messages) ← processHeader header opts messages inputCtx
-    pure (parserState, (Command.mkState env messages opts), some header)
+      let (header, parserState, messages) ← Parser.parseHeader inputCtx
+      let (env, messages) ← processHeader header opts messages inputCtx
+      let headerOnlyState := Command.mkState env messages opts
+      pure (parserState, headerOnlyState, some header)
   | some cmdState => do
-    pure ({ : Parser.ModuleParserState }, cmdState, none)
-  let commandState := { commandState with infoState.enabled := true }
+      pure ({ : Parser.ModuleParserState }, cmdState, none)
+  let commandState := { beforeCommandState with infoState.enabled := true }
   let s ← IO.processCommands inputCtx parserState commandState
-  pure (s, headerSyntax)
+  pure (s, beforeCommandState, headerSyntax)
