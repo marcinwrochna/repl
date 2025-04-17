@@ -53,7 +53,7 @@ namespace Lean.Elab.Info
 def kind : Info → String
   | .ofTacticInfo         _ => "TacticInfo"
   | .ofTermInfo           _ => "TermInfo"
-  | ofPartialTermInfo     _ => "PartialTermInfo"
+  | .ofPartialTermInfo    _ => "PartialTermInfo"
   | .ofCommandInfo        _ => "CommandInfo"
   | .ofMacroExpansionInfo _ => "MacroExpansionInfo"
   | .ofOptionInfo         _ => "OptionInfo"
@@ -70,7 +70,7 @@ def kind : Info → String
 def stx? : Info → Option Syntax
   | .ofTacticInfo         info => info.stx
   | .ofTermInfo           info => info.stx
-  | ofPartialTermInfo     info => info.stx
+  | .ofPartialTermInfo    info => info.stx
   | .ofCommandInfo        info => info.stx
   | .ofMacroExpansionInfo info => info.stx
   | .ofOptionInfo         info => info.stx
@@ -144,7 +144,7 @@ partial def filter (p : Info → Bool) (m : MVarId → Bool := fun _ => false) :
 partial def retainTacticInfo (tree : InfoTree) : List InfoTree :=
   tree.filter fun | .ofTacticInfo _ => true | _ => false
 
-/-- Discard all nodes besides `CommmandInfo` nodes with declarations. -/
+/-- Discard all nodes besides `CommandInfo` nodes with declarations. -/
 partial def retainDeclarations (tree : InfoTree) : List InfoTree :=
   tree.filter fun
   | .ofCommandInfo i => i.elaborator == ``Lean.Elab.Command.elabDeclaration
