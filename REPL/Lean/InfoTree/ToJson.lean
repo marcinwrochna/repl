@@ -234,18 +234,6 @@ deriving ToJson
 def MacroExpansionInfo.toJson (info : MacroExpansionInfo) (ctx : ContextInfo) : IO MacroExpansionInfo.Json := do
   return { stx := ← info.stx.toJson ctx info.lctx }
 
-structure OptionInfo.Json where
-  stx: Syntax.Json
-  optionName : Name
-  declName : Name
-deriving ToJson
-
-def OptionInfo.toJson (info : OptionInfo) (ctx : ContextInfo) : IO OptionInfo.Json := do
-  return {
-    stx := ← info.stx.toJson ctx {},
-    optionName := info.optionName,
-    declName := info.declName }
-
 structure InfoTree.HoleJson where
   goalState : String
 deriving ToJson
@@ -261,7 +249,6 @@ partial def InfoTree.toJson (t : InfoTree) (ctx? : Option ContextInfo) : IO Json
       | .ofCommandInfo        info => some <$> (do pure <| Lean.toJson (← info.toJson ctx))
       | .ofTacticInfo         info => some <$> (do pure <| Lean.toJson (← info.toJson ctx))
       | .ofMacroExpansionInfo info => some <$> (do pure <| Lean.toJson (← info.toJson ctx))
-      | .ofOptionInfo        info => some <$> (do pure <| Lean.toJson (← info.toJson ctx))
       | _                   => pure none
       return Lean.toJson (InfoTreeNode.mk info.kind node (← children.toList.mapM fun t' => t'.toJson ctx))
     else throw <| IO.userError "No `ContextInfo` available."
