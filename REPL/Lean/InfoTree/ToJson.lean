@@ -214,6 +214,38 @@ def TermInfo.toJson (info : TermInfo) (ctx : ContextInfo) : IO TermInfo.Json := 
     expr := (← ctx.ppExpr info.lctx info.expr).pretty
     isBinder := info.isBinder }
 
+structure PartialTermInfo.Json where
+  elaborator : Option Name
+  stx : Syntax.Json
+  expectedType? : Option String
+deriving ToJson
+
+def PartialTermInfo.toJson (info : PartialTermInfo) (ctx : ContextInfo) : IO PartialTermInfo.Json := do
+  return {
+    elaborator := match info.elaborator with | .anonymous => none | n => some n,
+    stx := ← info.stx.toJson ctx info.lctx,
+    expectedType? := ← info.expectedType?.mapM fun ty => do
+      pure (← ctx.ppExpr info.lctx ty).pretty }
+
+structure MacroExpansionInfo.Json where
+  stx : Syntax.Json  -- syntax before expansion
+deriving ToJson
+
+def MacroExpansionInfo.toJson (info : MacroExpansionInfo) (ctx : ContextInfo) : IO MacroExpansionInfo.Json := do
+  return { stx := ← info.stx.toJson ctx info.lctx }
+
+structure OptionInfo.Json where
+  stx: Syntax.Json
+  optionName : Name
+  declName : Name
+deriving ToJson
+
+def OptionInfo.toJson (info : OptionInfo) (ctx : ContextInfo) : IO OptionInfo.Json := do
+  return {
+    stx := ← info.stx.toJson ctx {},
+    optionName := info.optionName,
+    declName := info.declName }
+
 structure InfoTree.HoleJson where
   goalState : String
 deriving ToJson
@@ -224,9 +256,12 @@ partial def InfoTree.toJson (t : InfoTree) (ctx? : Option ContextInfo) : IO Json
   | .node info children =>
     if let some ctx := ctx? then
       let node : Option Json ← match info with
-      | .ofTermInfo    info => some <$> (do pure <| Lean.toJson (← info.toJson ctx))
-      | .ofCommandInfo info => some <$> (do pure <| Lean.toJson (← info.toJson ctx))
-      | .ofTacticInfo  info => some <$> (do pure <| Lean.toJson (← info.toJson ctx))
+      | .ofTermInfo           info => some <$> (do pure <| Lean.toJson (← info.toJson ctx))
+      | .ofPartialTermInfo    info => some <$> (do pure <| Lean.toJson (← info.toJson ctx))
+      | .ofCommandInfo        info => some <$> (do pure <| Lean.toJson (← info.toJson ctx))
+      | .ofTacticInfo         info => some <$> (do pure <| Lean.toJson (← info.toJson ctx))
+      | .ofMacroExpansionInfo info => some <$> (do pure <| Lean.toJson (← info.toJson ctx))
+      | .ofOptionInfo        info => some <$> (do pure <| Lean.toJson (← info.toJson ctx))
       | _                   => pure none
       return Lean.toJson (InfoTreeNode.mk info.kind node (← children.toList.mapM fun t' => t'.toJson ctx))
     else throw <| IO.userError "No `ContextInfo` available."
