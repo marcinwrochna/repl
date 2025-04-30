@@ -21,7 +21,9 @@ instance : ToJson String.Range where
 deriving instance ToJson for SourceInfo
 deriving instance ToJson for Syntax.Preresolved
 deriving instance ToJson for Syntax
+deriving instance ToJson for DeclarationRange
 
+deriving instance BEq for QuotKind, QuotVal, InductiveVal, ConstantInfo
 
 
 structure InfoTreeNode (α : Type) where
@@ -111,6 +113,8 @@ structure DeclarationInfo where
   -- May be .anonymous like for 'example' declarations.
   -- Does not include universe parameters like in 'foo.{u,v}'.
 
+  declRange: Option String.Range -- Range of the whole declaration, including modifiers and id.
+
   typeByteRange: Option String.Range -- Range that got parsed as the signature's type term (after ':').
   -- For theorems and similar this is the theorem statement.
   -- Does not include any binders like '(n : Nat)'.
@@ -139,8 +143,30 @@ private def nameTail : Name → String
   | Name.str _ s => s
   | _ => ""
 
+-- Same as ContextInfo.runCoreM, but we pass the fileMap.
+def ContextInfo.runCoreM' (info : ContextInfo) (x : CoreM α) : IO α := do
+  (·.1) <$>
+    (withOptions (fun _ => info.options) x).toIO
+      { currNamespace := info.currNamespace, openDecls := info.openDecls
+        fileName := "<InfoTree>", fileMap := info.fileMap }
+      { env := info.env, ngen := info.ngen }
 
-def getDeclInfo (info : CommandInfo) : IO DeclarationInfo := do
+
+-- def elabDeclId (stx: Syntax) : Lean.Elab.Command.CommandElabM ExpandDeclIdResult := do
+--   let modifiers : TSyntax ``Parser.Command.declModifiers := ⟨stx[0]⟩
+--   let modifiers ← elabModifiers modifiers
+--   let view ← Lean.Elab.Command.mkDefView modifiers stx[1]
+--   Lean.Elab.Command.runTermElabM fun vars => do
+--     Term.expandDeclId (← getCurrNamespace) (← Lean.Elab.Term.getLevelNames) view.declId view.modifiers
+
+-- def getDeclId (stx: Syntax) (ctx: Elab.Command.Context) (cmdState : Command.State) : IO ExpandDeclIdResult := do
+--   let cmdStateRef ← IO.mkRef { cmdState with
+--     messages := .empty, traceState := {}, snapshotTasks := #[] }
+--   EIO.toIO (fun _ => IO.userError "zonk") do
+--     (elabDeclId stx).run ctx cmdStateRef
+
+
+def getDeclInfo (info : CommandInfo) (ctx : ContextInfo) : IO DeclarationInfo := do
   let stx : Lean.Syntax := info.stx
   if (! stx.isOfKind ``Lean.Parser.Command.declaration) then
     throw (IO.userError s!"Unexpected Syntax.kind for declaration: {stx.getKind}")
@@ -158,6 +184,7 @@ def getDeclInfo (info : CommandInfo) : IO DeclarationInfo := do
   let kind := match declNode.getKind with | .str _ s => s | _ => ""  --
 
   -- Id/name:
+  -- let declId ← getDeclId stx
   let declIdNode := declNode.getArgs.find? (·.isOfKind ``Lean.Parser.Command.declId)
   -- Skip universe parameters.
   let id := declIdNode.elim Lean.Name.anonymous (fun x => (x.getArg 0).getId)
@@ -176,11 +203,16 @@ def getDeclInfo (info : CommandInfo) : IO DeclarationInfo := do
   let declValSimple := declNode.getArgs.find? (·.isOfKind ``Lean.Parser.Command.declValSimple)
   let declBody := declValSimple.bind (·.getArg 1)
 
+  let declRange ← ContextInfo.runCoreM' ctx (Lean.Elab.getDeclarationRange? stx)
+  let declRange: Option String.Range := declRange.map
+    fun r => ⟨ctx.fileMap.ofPosition r.pos, ctx.fileMap.ofPosition r.endPos⟩
+
   pure {
     modifiers := modifiers
     kind := kind
     isDefLike := Lean.Elab.Command.isDefLike declNode
     id := id
+    declRange := declRange
     typeByteRange := (declSigType.getD Syntax.missing).getRange?
     valByteRange := (declVal.getD Syntax.missing).getRange?
     valBodyByteRange := (declBody.getD Syntax.missing).getRange?
@@ -190,7 +222,7 @@ def getDeclInfo (info : CommandInfo) : IO DeclarationInfo := do
 
 def CommandInfo.toJson (info : CommandInfo) (ctx : ContextInfo) : IO CommandInfo.Json := do
   let declaration ← if (info.elaborator  == ``Lean.Elab.Command.elabDeclaration)
-    then pure (some (← getDeclInfo info))
+    then pure (some (← getDeclInfo info ctx))
     else pure none
   return {
     elaborator := match info.elaborator with | .anonymous => none | n => some n,
@@ -276,24 +308,72 @@ structure ConstantInfo.Json where
   isProp: Bool -- Whether type is a Prop.
   value: Option String  -- The constant's value Expr, pretty-printed (for a theorem, this is the proof, as an unreduced term).
   safety: String -- "safe" or "unsafe" or "partial", see https://lean-lang.org/doc/reference/latest/Definitions/Modifiers/#declaration-modifiers
+  range: Option String.Range
 deriving ToJson
 
 
-def constInfoToJson (c: ConstantInfo) (ctx : ContextInfo) : IO (Option ConstantInfo.Json) := do
+def constInfoToJson (c: ConstantInfo) (r?: Option DeclarationRanges) (ctx : ContextInfo) : IO (Option ConstantInfo.Json) := do
   if (nameTail c.name).startsWith "_" then
     return none
   let safety := if c.isUnsafe then "unsafe" else (if c.isPartial then "partial" else "safe")
   let type := (← ctx.ppExpr {} c.type).pretty
   let isProp ←  ctx.runMetaM {} <| Lean.Meta.isProp c.type
   let value ←  c.value?.mapM (fun v => do pure (← ctx.ppExpr {} v).pretty)
+  let declRange: Option DeclarationRange := r?.map (·.range)
+  let range: Option String.Range := declRange.map
+    fun r => ⟨ctx.fileMap.ofPosition r.pos, ctx.fileMap.ofPosition r.endPos⟩
   return some {
-    name := c.name, kind := constKind c, levelParams := c.levelParams, type, isProp, safety, value
+    name := c.name,
+    kind := constKind c,
+    levelParams := c.levelParams,
+    type, isProp, safety, value, range
   }
 
-def constantsToJson(constants: Array ConstantInfo) (ctx : ContextInfo) : IO (Array ConstantInfo.Json) := do
-  constants.filterMapM (fun x => constInfoToJson x ctx)
+def constantsToJson (constants: Array (ConstantInfo × Option DeclarationRanges)) (ctx : ContextInfo) : IO (Array ConstantInfo.Json) := do
+  constants.filterMapM (fun ⟨c, r?⟩ => constInfoToJson c r? ctx)
 
-def constMapToJson(constMap: Lean.ConstMap) (ctx : ContextInfo) : IO (List ConstantInfo.Json) := do
-  constMap.toList.filterMapM (fun (_, c) => (constInfoToJson c ctx))
+
+def getTopLevelContextInfo (infoTree: InfoTree) : Option ContextInfo :=
+  match infoTree with
+  | .context c _ => c.mergeIntoOuter? none
+  | _ => none
+
+def getNewConstants (newConstMap: ConstMap) (previousConstMap: ConstMap) (newCtxInfo: ContextInfo)
+      : IO (Array ConstantInfo.Json) := do
+    -- Get local constants only.
+    -- (Alternatively we could use `(← Lean.mkModuleData cmdState.env).constants`).
+
+    -- Minor remark:
+    -- this only happens for one file in all of mathlib:
+    -- if a constant with the same namespaced name already exists in imports
+    -- and is shadowed by a new declaration (same namespace, same name)
+    -- we won't see it, probably because it gets updated in stage1;
+    -- unfortunately iterating over all of stage1 is too slow.
+
+    let constants := newConstMap.foldStage2 (fun cs _ c => cs.push c) #[]
+    let newConstants := constants.filter $ fun c =>
+      match previousConstMap.find? c.name with
+      | none => true
+      | some old => c != old
+    let ranges ← newCtxInfo.runCoreM' $
+      newConstants.mapM fun c => Lean.findDeclarationRanges? c.name
+    constantsToJson (Array.zip newConstants ranges) newCtxInfo
+
+def collectNewConstantsPerTree (infoTrees: List InfoTree) (initialConstMap: ConstMap) : IO (Array (Array ConstantInfo.Json)) := do
+  let mut previousConstMap := initialConstMap
+  let mut result: Array (Array ConstantInfo.Json) := {}
+
+  for infoTree in infoTrees do
+    let ctxInfo? := getTopLevelContextInfo infoTree
+    match ctxInfo? with
+    | some ctxInfo => do
+      let newConstMap := ctxInfo.env.constants
+      result := result.push <| ← getNewConstants newConstMap previousConstMap ctxInfo
+      previousConstMap := newConstMap
+    | none => do
+      result := result.push #[]
+      continue
+
+  return result
 
 end Lean.Elab

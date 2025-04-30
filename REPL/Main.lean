@@ -292,7 +292,7 @@ def unpickleProofSnapshot (n : UnpickleProofState) : M IO (ProofStepResponse ⊕
 /--
 Run a command, returning the id of the new environment, and any messages and sorries.
 -/
-def runCommand (s : Command) : M IO (CommandResponse ⊕ Error) := do
+def runCommand (s : Command) (fileName? : Option String := none) : M IO (CommandResponse ⊕ Error) := do
   let (cmdSnapshot?, notFound) ← do match s.env with
   | none => pure (none, false)
   | some i => do match (← get).cmdStates[i]? with
@@ -303,30 +303,22 @@ def runCommand (s : Command) : M IO (CommandResponse ⊕ Error) := do
   let initialCmdState? := cmdSnapshot?.map fun c => c.cmdState
 
   -- Parse and execute the commands.
-  let (frontendState, headerSyntax) ← try
-    IO.processInput s.cmd initialCmdState?
+  let fileName   := fileName?.getD "<input>"
+  let inputCtx   := Parser.mkInputContext s.cmd fileName
+  let (frontendState, initialCmdState, headerSyntax) ← try
+    IO.processInput inputCtx initialCmdState?
   catch ex =>
     return .inr ⟨ex.toString⟩
   let cmdState := frontendState.commandState
-  let messages := cmdState.messages.toList
-  let trees := cmdState.infoState.trees.toList
-  let messages ← messages.mapM fun m => Message.of m
   -- For debugging purposes, sometimes we print out the trees here:
   -- trees.forM fun t => do IO.println (← t.format)
-  let sorries ← sorries trees initialCmdState.env none
-  let sorries ← match s.rootGoals with
-  | some true => pure (sorries ++ (← collectRootGoalsAsSorries trees initialCmdState.env))
-  | _ => pure sorries
-  let tactics ← match s.allTactics with
-  | some true => tactics trees initialCmdState.env
-  | _ => pure []
 
   -- Make a snapshot of the state.
   let cmdSnapshot :=
   { cmdState := cmdState
     cmdContext := (cmdSnapshot?.map fun c => c.cmdContext).getD
-      { fileName := "", -- TODO the default initial cmdContext perhaps misses e.g. options?
-        fileMap := default,
+      { fileName := fileName,
+        fileMap := inputCtx.fileMap,
         snap? := none,
         cancelTk? := none } }
   let env ← recordCommandSnapshot cmdSnapshot
@@ -339,11 +331,13 @@ def runCommand (s : Command) : M IO (CommandResponse ⊕ Error) := do
   let trees := cmdState.infoState.trees.toList
   -- For debugging purposes, sometimes we print out the trees here:
   -- trees.forM fun t => do IO.println (← t.format)
-  let sorries ← sorries trees (initialCmdState?.map (·.env)) none
+  let sorries ← sorries trees initialCmdState.env none
   let sorries ← if s.rootGoals.isEqSome true
-    then pure (sorries ++ (← collectRootGoalsAsSorries trees))
+    then pure (sorries ++ (← collectRootGoalsAsSorries trees initialCmdState.env))
     else pure sorries
-  let tactics ← if s.allTactics.isEqSome true then tactics trees else pure []
+  let tactics ← if s.allTactics.isEqSome true
+    then tactics trees initialCmdState.env
+    else pure []
 
   -- Retrieve infotrees, or some subset of them, if requested.
   let jsonTrees := match s.infotree with
@@ -373,15 +367,13 @@ def runCommand (s : Command) : M IO (CommandResponse ⊕ Error) := do
 
   -- Retrieve constants (theorems, defs, ..) if requested.
   let constants ←
-    if s.constants.isEqSome true then
-      let moduleData ← Lean.mkModuleData cmdState.env
-      let ctxInfo: ContextInfo := { env := cmdState.env, fileMap := default , ngen := cmdState.ngen }
-      -- let ctxInfo : Option ContextInfo := match trees.toArray.back! with
-      --   | .context c _ => (c.mergeIntoOuter? none)
-      --   | _ => none
-      pure $ some $ Lean.toJson (← constantsToJson moduleData.constants ctxInfo)
-    else
+    if s.constants.isEqSome true then do
+      let initialConstMap := initialCmdState?.elim {} (fun cmdState => cmdState.env.constants)
+      pure $ some $ Lean.toJson $ ← (collectNewConstantsPerTree trees initialConstMap)
+    else do
       pure none
+  -- let ctxInfo := { env := cmdState.env, fileMap := inputCtx.fileMap, ngen := cmdState.ngen }
+  -- ctxInfo.runCoreM'
 
   return .inl
     { env,
