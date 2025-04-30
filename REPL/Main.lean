@@ -333,10 +333,12 @@ def runCommand (s : Command) (fileName? : Option String := none) : M IO (Command
 
   -- Retrieve messages.
   let messages := cmdState.messages.toList
+  let messages := messages.drop initialCmdState.messages.toList.length
   let messages ← messages.mapM fun m => Message.of m
 
   -- Retrieve tactics and sorries.
   let trees := cmdState.infoState.trees.toList
+  let trees := trees.drop initialCmdState.infoState.trees.size
   let trees := trees.filter filterRootTactics
   -- For debugging purposes, sometimes we print out the trees here:
   -- trees.forM fun t => do IO.println (← t.format)
