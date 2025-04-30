@@ -203,8 +203,8 @@ def getDeclInfo (info : CommandInfo) (ctx : ContextInfo) : IO DeclarationInfo :=
   let declValSimple := declNode.getArgs.find? (·.isOfKind ``Lean.Parser.Command.declValSimple)
   let declBody := declValSimple.bind (·.getArg 1)
 
-  let declRange ← ContextInfo.runCoreM' ctx (Lean.Elab.getDeclarationRange? stx)
-  let declRange: Option String.Range := declRange.map
+  let declRange ← ContextInfo.runCoreM' ctx (Lean.Elab.getDeclarationRange stx)
+  let declRange: Option String.Range := (some declRange).map
     fun r => ⟨ctx.fileMap.ofPosition r.pos, ctx.fileMap.ofPosition r.endPos⟩
 
   pure {
@@ -246,19 +246,6 @@ def TermInfo.toJson (info : TermInfo) (ctx : ContextInfo) : IO TermInfo.Json := 
     expr := (← ctx.ppExpr info.lctx info.expr).pretty
     isBinder := info.isBinder }
 
-structure PartialTermInfo.Json where
-  elaborator : Option Name
-  stx : Syntax.Json
-  expectedType? : Option String
-deriving ToJson
-
-def PartialTermInfo.toJson (info : PartialTermInfo) (ctx : ContextInfo) : IO PartialTermInfo.Json := do
-  return {
-    elaborator := match info.elaborator with | .anonymous => none | n => some n,
-    stx := ← info.stx.toJson ctx info.lctx,
-    expectedType? := ← info.expectedType?.mapM fun ty => do
-      pure (← ctx.ppExpr info.lctx ty).pretty }
-
 structure MacroExpansionInfo.Json where
   stx : Syntax.Json  -- syntax before expansion
 deriving ToJson
@@ -277,7 +264,7 @@ partial def InfoTree.toJson (t : InfoTree) (ctx? : Option ContextInfo) : IO Json
     if let some ctx := ctx? then
       let node : Option Json ← match info with
       | .ofTermInfo           info => some <$> (do pure <| Lean.toJson (← info.toJson ctx))
-      | .ofPartialTermInfo    info => some <$> (do pure <| Lean.toJson (← info.toJson ctx))
+      | .ofOmissionInfo       info => some <$> (do pure <| Lean.toJson (← info.toJson ctx))
       | .ofCommandInfo        info => some <$> (do pure <| Lean.toJson (← info.toJson ctx))
       | .ofTacticInfo         info => some <$> (do pure <| Lean.toJson (← info.toJson ctx))
       | .ofMacroExpansionInfo info => some <$> (do pure <| Lean.toJson (← info.toJson ctx))

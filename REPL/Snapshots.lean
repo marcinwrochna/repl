@@ -83,7 +83,7 @@ def unpickle (path : FilePath) : IO (CommandSnapshot × CompactedRegion) := unsa
   let ((imports, map₂, cmdState, cmdContext), region) ←
     _root_.unpickle (Array Import × PHashMap Name ConstantInfo × CompactableCommandSnapshot ×
       Command.Context) path
-  let env ← (← importModules imports {} 0 (loadExts := true)).replay (Std.HashMap.ofList map₂.toList)
+  let env ← (← importModules imports {} 0).replay (Std.HashMap.ofList map₂.toList)
   let p' : CommandSnapshot :=
   { cmdState := { cmdState with env }
     cmdContext }
@@ -141,8 +141,18 @@ def runMetaM (p : ProofSnapshot) (t : MetaM α) : IO (α × ProofSnapshot) := do
 
 /-- Run a `TermElabM` monadic function in the current `ProofSnapshot`, updating the `Term.State`. -/
 def runTermElabM (p : ProofSnapshot) (t : TermElabM α) : IO (α × ProofSnapshot) := do
+  -- Create a wrapped function that ensures auxiliary names work properly in Lean <= v4.18.0
+  let wrappedT : TermElabM α := do
+    if (← read).declName?.isNone then
+      let syntheticDeclName := `auxInProofSnapshot
+      let ctx ← read
+      let newCtx := { ctx with declName? := some syntheticDeclName }
+      withTheReader Term.Context (fun _ => newCtx) t
+    else
+      t
+
   let ((a, termState), p') ← p.runMetaM (Lean.Elab.Term.TermElabM.run (s := p.termState)
-    (do let r ← t; Term.synthesizeSyntheticMVarsNoPostponing; pure r))
+    (do let r ← wrappedT; Term.synthesizeSyntheticMVarsNoPostponing; pure r))
   return (a, { p' with termState })
 
 /-- Run a `TacticM` monadic function in the current `ProofSnapshot`, updating the `Tactic.State`. -/
@@ -291,7 +301,7 @@ def unpickle (path : FilePath) (cmd? : Option CommandSnapshot) :
   let env ← match cmd? with
   | none =>
     enableInitializersExecution
-    (← importModules imports {} 0 (loadExts := true)).replay (Std.HashMap.ofList map₂.toList)
+    (← importModules imports {} 0).replay (Std.HashMap.ofList map₂.toList)
   | some cmd =>
     cmd.cmdState.env.replay (Std.HashMap.ofList map₂.toList)
   let p' : ProofSnapshot :=

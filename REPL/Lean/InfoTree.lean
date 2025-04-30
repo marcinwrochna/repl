@@ -53,7 +53,6 @@ namespace Lean.Elab.Info
 def kind : Info → String
   | .ofTacticInfo         _ => "TacticInfo"
   | .ofTermInfo           _ => "TermInfo"
-  | .ofPartialTermInfo     _ => "PartialTermInfo"
   | .ofCommandInfo        _ => "CommandInfo"
   | .ofMacroExpansionInfo _ => "MacroExpansionInfo"
   | .ofOptionInfo         _ => "OptionInfo"
@@ -63,14 +62,12 @@ def kind : Info → String
   | .ofCustomInfo         _ => "CustomInfo"
   | .ofFVarAliasInfo      _ => "FVarAliasInfo"
   | .ofFieldRedeclInfo    _ => "FieldRedeclInfo"
-  | .ofChoiceInfo         _ => "ChoiceInfo"
-  | .ofDelabTermInfo      _ => "DelabTermInfo"
+  | .ofOmissionInfo       _ => "OmissionInfo"
 
 /-- The `Syntax` for a `Lean.Elab.Info`, if there is one. -/
 def stx? : Info → Option Syntax
   | .ofTacticInfo         info => info.stx
   | .ofTermInfo           info => info.stx
-  | ofPartialTermInfo     info => info.stx
   | .ofCommandInfo        info => info.stx
   | .ofMacroExpansionInfo info => info.stx
   | .ofOptionInfo         info => info.stx
@@ -80,8 +77,7 @@ def stx? : Info → Option Syntax
   | .ofCustomInfo         info => info.stx
   | .ofFVarAliasInfo      _    => none
   | .ofFieldRedeclInfo    info => info.stx
-  | .ofChoiceInfo         info => info.stx
-  | .ofDelabTermInfo      info => info.stx
+  | .ofOmissionInfo       info => info.stx
 
 /-- Is the `Syntax` for this `Lean.Elab.Info` original, or synthetic? -/
 def isOriginal (i : Info) : Bool :=
@@ -135,9 +131,9 @@ partial def filter (p : Info → Bool) (m : MVarId → Bool := fun _ => false) :
   | .context ctx tree => tree.filter p m |>.map (.context ctx)
   | .node info children =>
     if p info then
-      [.node info (children.toList.map (filter p m)).flatten.toPArray']
+      [.node info (children.toList.map (filter p m)).join.toPArray']
     else
-      (children.toList.map (filter p m)).flatten
+      (children.toList.map (filter p m)).join
   | .hole mvar => if m mvar then [.hole mvar] else []
 
 /-- Discard all nodes besides `.context` nodes and `TacticInfo` nodes. -/
@@ -167,7 +163,7 @@ partial def findAllInfo (t : InfoTree) (ctx? : Option ContextInfo) (p : Info →
   | context ctx t => t.findAllInfo (ctx.mergeIntoOuter? ctx?) p stop
   | node i ts  =>
     let info := if p i then [(i, ctx?)] else []
-    let rest := if stop i then [] else ts.toList.flatMap (fun t => t.findAllInfo ctx? p stop)
+    let rest := if stop i then [] else ts.toList.bind (fun t => t.findAllInfo ctx? p stop)
     info ++ rest
   | _ => []
 
@@ -185,7 +181,7 @@ partial def findAllInfoTactics (t : InfoTree) (ctx? : Option ContextInfo) (rootG
       else
         []
     | _ => []
-    tInfo ++ ts.toList.flatMap (fun t => t.findAllInfoTactics ctx? rootGoals)
+    tInfo ++ ts.toList.bind (fun t => t.findAllInfoTactics ctx? rootGoals)
   | _ => []
 
 /-- Return all `TacticInfo` nodes in an `InfoTree` with "original" syntax,
@@ -207,7 +203,7 @@ partial def findRootGoals (t : InfoTree) (ctx? : Option ContextInfo := none) :
       match ctx? with
       | some ctx => [(i, ctx, i.goalsBefore)]
       | _ => []
-    | _ => ts.toList.flatMap (fun t => t.findRootGoals ctx?)
+    | _ => ts.toList.bind (fun t => t.findRootGoals ctx?)
   | _ => []
 
 /-- Return all `TacticInfo` nodes in an `InfoTree`
