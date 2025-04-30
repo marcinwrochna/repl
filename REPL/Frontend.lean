@@ -16,17 +16,15 @@ and create a new environment.
 Otherwise, we add to the existing environment.
 
 Returns:
-1. The resulting command state after processing the entire input
+1. The resulting Frontend.State after processing the entire input
 2. The header-only command state (only useful when cmdState? is none)
 3. The header Syntax (if there was one).
 -/
-def processInput (input : String) (cmdState? : Option Command.State)
-    (opts : Options := {}) (fileName : Option String := none) :
+def processInput (inputCtx : Parser.InputContext) (cmdState? : Option Command.State)
+    (opts : Options := {}) :
     IO (Frontend.State × Command.State × Option Syntax) := unsafe do
   Lean.initSearchPath (← Lean.findSysroot)
   enableInitializersExecution
-  let fileName   := fileName.getD "<input>"
-  let inputCtx   := Parser.mkInputContext input fileName
   let (parserState, beforeCommandState, headerSyntax) ← match cmdState? with
   | none => do
       let (header, parserState, messages) ← Parser.parseHeader inputCtx

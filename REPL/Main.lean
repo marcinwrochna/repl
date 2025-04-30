@@ -292,7 +292,7 @@ def unpickleProofSnapshot (n : UnpickleProofState) : M IO (ProofStepResponse ⊕
 /--
 Run a command, returning the id of the new environment, and any messages and sorries.
 -/
-def runCommand (s : Command) : M IO (CommandResponse ⊕ Error) := do
+def runCommand (s : Command) (fileName? : Option String := none) : M IO (CommandResponse ⊕ Error) := do
   let (cmdSnapshot?, notFound) ← do match s.env with
   | none => pure (none, false)
   | some i => do match (← get).cmdStates[i]? with
@@ -303,8 +303,10 @@ def runCommand (s : Command) : M IO (CommandResponse ⊕ Error) := do
   let initialCmdState? := cmdSnapshot?.map fun c => c.cmdState
 
   -- Parse and execute the commands.
+  let fileName   := fileName?.getD "<input>"
+  let inputCtx   := Parser.mkInputContext s.cmd fileName
   let (frontendState, initialCmdState, headerSyntax) ← try
-    IO.processInput s.cmd initialCmdState?
+    IO.processInput inputCtx initialCmdState?
   catch ex =>
     return .inr ⟨ex.toString⟩
   let cmdState := frontendState.commandState
@@ -313,8 +315,8 @@ def runCommand (s : Command) : M IO (CommandResponse ⊕ Error) := do
   let cmdSnapshot :=
   { cmdState := cmdState
     cmdContext := (cmdSnapshot?.map fun c => c.cmdContext).getD
-      { fileName := "", -- TODO the default initial cmdContext perhaps misses e.g. options?
-        fileMap := default,
+      { fileName := fileName,
+        fileMap := inputCtx.fileMap,
         snap? := none,
         cancelTk? := none } }
   let env ← recordCommandSnapshot cmdSnapshot
@@ -361,15 +363,13 @@ def runCommand (s : Command) : M IO (CommandResponse ⊕ Error) := do
 
   -- Retrieve constants (theorems, defs, ..) if requested.
   let constants ←
-    if s.constants.isEqSome true then
-      let moduleData ← Lean.mkModuleData cmdState.env
-      let ctxInfo: ContextInfo := { env := cmdState.env, fileMap := default , ngen := cmdState.ngen }
-      -- let ctxInfo : Option ContextInfo := match trees.toArray.back! with
-      --   | .context c _ => (c.mergeIntoOuter? none)
-      --   | _ => none
-      pure $ some $ Lean.toJson (← constantsToJson moduleData.constants ctxInfo)
-    else
+    if s.constants.isEqSome true then do
+      let initialConstMap := initialCmdState?.elim {} (fun cmdState => cmdState.env.constants)
+      pure $ some $ Lean.toJson $ ← (collectNewConstantsPerTree trees initialConstMap)
+    else do
       pure none
+  -- let ctxInfo := { env := cmdState.env, fileMap := inputCtx.fileMap, ngen := cmdState.ngen }
+  -- ctxInfo.runCoreM'
 
   return .inl
     { env,
