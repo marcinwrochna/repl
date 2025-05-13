@@ -69,10 +69,15 @@ def ContextInfo.runCoreM' (info : ContextInfo) (x : CoreM α) : IO α := do
       { env := info.env, ngen := info.ngen }
 
 
+def getDocStringText' (stx : TSyntax `Lean.Parser.Command.docComment) : IO String :=
+  match stx.raw[1] with
+  | Syntax.atom _ val => return val.extract 0 (val.endPos - ⟨2⟩)
+  | _                 => throw $ IO.userError "unexpected doc string"
+
 -- A version of `Lean.Elab.elabModifiers` without monads; attributes are ignored as they require more context.
 def elabModifiers' (stx : TSyntax ``Parser.Command.declModifiers) : IO Modifiers := do
   let docCommentStx := stx.raw[0]
-  let attrsStx      := stx.raw[1]
+  let _attrsStx      := stx.raw[1]
   let visibilityStx := stx.raw[2]
   let noncompStx    := stx.raw[3]
   let unsafeStx     := stx.raw[4]
@@ -83,7 +88,9 @@ def elabModifiers' (stx : TSyntax ``Parser.Command.declModifiers) : IO Modifiers
       RecKind.partial
     else
       RecKind.nonrec
-  let docString? := docCommentStx.getOptional?.map TSyntax.mk
+  let docString? ← match docCommentStx.getOptional? with
+    | none   => pure none
+    | some s => pure (some (← getDocStringText' ⟨s⟩))
   let visibility ← match visibilityStx.getOptional? with
     | none   => pure Visibility.regular
     | some v =>
@@ -93,7 +100,7 @@ def elabModifiers' (stx : TSyntax ``Parser.Command.declModifiers) : IO Modifiers
       else throw $ IO.userError "unexpected visibility modifier"
   let attrs := #[]  -- Can't elaborate attributes without significantly more context.
   return {
-    stx, docString?, visibility, recKind, attrs,
+    docString?, visibility, recKind, attrs,
     isUnsafe        := !unsafeStx.isNone
     isNoncomputable := !noncompStx.isNone
   }
@@ -171,8 +178,8 @@ def getDeclInfo (info : CommandInfo) (ctx : ContextInfo) : IO DeclarationInfo :=
   let declValSimple := declNode.getArgs.find? (·.isOfKind ``Lean.Parser.Command.declValSimple)
   let declBody := declValSimple.bind (·.getArg 1)
 
-  let declRange ← ContextInfo.runCoreM' ctx (Lean.Elab.getDeclarationRange? stx)
-  let declRange: Option String.Range := declRange.map
+  let declRange ← ContextInfo.runCoreM' ctx (Lean.Elab.getDeclarationRange stx)
+  let declRange: Option String.Range := (some declRange).map
     fun r => ⟨ctx.fileMap.ofPosition r.pos, ctx.fileMap.ofPosition r.endPos⟩
 
   pure {
