@@ -35,7 +35,7 @@ def Json.nonfalse (k : String) : Bool → List (String × Json)
   | true  => [⟨k, toJson true⟩]
 
 instance : ToJson ConstantInfo.Json where
-  toJson c := Json.mkObj <| .flatten [
+  toJson c := Json.mkObj <| .join [
     [("name", toJson c.name)],
     [("kind", c.kind)],
     [("type", c.type)],
