@@ -339,10 +339,12 @@ def runCommand (s : Command) (fileName? : Option String := none) : M IO (Command
 
   -- Retrieve messages.
   let messages := cmdState.messages.toList
+  let messages := messages.drop initialCmdState.messages.toList.length
   let messages ← messages.mapM fun m => Message.of m
 
   -- Retrieve tactics and sorries.
   let trees := cmdState.infoState.trees.toList
+  let trees := trees.drop initialCmdState.infoState.trees.size
   let trees := trees.filter filterRootTactics
   -- For debugging purposes, sometimes we print out the trees here:
   -- trees.forM fun t => do IO.println (← t.format)
@@ -472,9 +474,9 @@ def verifyProof (s : VerifyProof) : M IO (VerifyProofResponse ⊕ Error) := do
   if tAsked != {tProved  with value := tAsked.value} then
     return .inr ⟨s.constName ++ " is not the same in the two environments."⟩
 
-  -- let (_,s') := (Lean.Elab.Command.CollectAxioms.collect newConstName).run envProved' |>.run {}
-  -- let axioms: Array Name := s'.axioms
-  let axioms: Array Name ← runDummyEnvM envProved (collectAxioms constName)
+  let (_,s') := (Lean.Elab.Command.CollectAxioms.collect constName).run envProved |>.run {}
+  let axioms: Array Name := s'.axioms
+  --- let axioms: Array Name ← runDummyEnvM envProved (collectAxioms constName)
   for a in axioms do
     if !AllowedAxioms.contains a then
       return .inr ⟨s.constName ++ " uses the axiom " ++ toString a ++ ", which is not allowed."⟩
