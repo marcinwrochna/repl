@@ -122,7 +122,7 @@ def Json.nonfalse (k : String) : Bool → List (String × Json)
   | true  => [⟨k, toJson true⟩]
 
 instance : ToJson ConstInfo where
-  toJson c := Json.mkObj <| .flatten [
+  toJson c := Json.mkObj <| .join [
     [("kind", c.kind)],
     [("type", c.type)],
     Json.opt "value" c.value,
@@ -187,6 +187,14 @@ def getConstInfo (const: ConstantInfo) (pp : Expr → IO String) (ctx : Elab.Con
     return none
 
 
+/-- Find the `.lean` source of a module in a `LEAN_SRC_PATH` search path. -/
+partial def findLean (sp : SearchPath) (mod : Name) : IO System.FilePath := do
+  if let some fname ← sp.findWithExt "lean" mod then
+    return fname
+  else
+    throw <| IO.userError s!"Failed to find source file for {mod}"
+
+
 unsafe def corpusMain (cOpts: CorpusOptions) : IO Unit := do
   let (elanInstall?, leanInstall?, lakeInstall?) ← Lake.findInstall?
   let some lakeInstall := lakeInstall? | throw <| IO.userError "Lake installation not found"
@@ -206,7 +214,7 @@ unsafe def corpusMain (cOpts: CorpusOptions) : IO Unit := do
 
   let mut visited: Array System.FilePath := #[]
 
-  for (oleanPath, i) in oleans.zipIdx do
+  for (oleanPath, i) in oleans.zipWithIndex do
     if visited.contains oleanPath then
       IO.eprintln s!"({i + 1} / {oleans.size}) Skipping already loaded {oleanPath}."
       continue
