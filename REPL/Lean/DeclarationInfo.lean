@@ -68,7 +68,6 @@ def ContextInfo.runCoreM' (info : ContextInfo) (x : CoreM α) : IO α := do
         fileName := "<InfoTree>", fileMap := info.fileMap }
       { env := info.env, ngen := info.ngen }
 
-
 def getDocStringText' (stx : TSyntax `Lean.Parser.Command.docComment) : IO String :=
   match stx.raw[1] with
   | Syntax.atom _ val => return val.extract 0 (val.endPos - ⟨2⟩)
