@@ -145,13 +145,21 @@ def getConstInfo (const: ConstantInfo) (pp : Expr → IO String) (ctx : Elab.Con
     return none
 
 
+/-- Find the `.lean` source of a module in a `LEAN_SRC_PATH` search path. -/
+partial def findLean (sp : SearchPath) (mod : Name) : IO System.FilePath := do
+  if let some fname ← sp.findWithExt "lean" mod then
+    return fname
+  else
+    throw <| IO.userError s!"Failed to find source file for {mod}"
+
+
 unsafe def processModule
   (i : Nat) (n : Nat)
   (oleanPath : System.FilePath)
   (searchPath: SearchPath)
   (srcSearchPath: SearchPath)
   (cOpts: CorpusOptions)
-  (atomicStdOut: Std.Mutex IO.FS.Stream)
+  (atomicStdOut: IO.Mutex IO.FS.Stream)
 : IO Unit := do
 
   let some moduleName ← searchModuleNameOfFileName oleanPath searchPath
@@ -199,7 +207,6 @@ unsafe def processModule
     stdOut.putStrLn ""
     stdOut.flush
 
-
 unsafe def corpusMain (cOpts: CorpusOptions) : IO Unit := do
   let (elanInstall?, leanInstall?, lakeInstall?) ← Lake.findInstall?
   let some lakeInstall := lakeInstall? | throw <| IO.userError "Lake installation not found"
@@ -220,12 +227,12 @@ unsafe def corpusMain (cOpts: CorpusOptions) : IO Unit := do
   -- TODO add option to exclude Init, Lake, Lean, Std, Qq, ProofWidget, Batteries; Mathlib.
 
 
-  let atomicStdOut ← Std.Mutex.new (← IO.getStdout)
+  let atomicStdOut ← IO.Mutex.new (← IO.getStdout)
 
   let mut visited: Array System.FilePath := #[]
   let mut tasks: List (Task (Except IO.Error Unit)) := []
 
-  for (oleanPath, i) in oleans.zipIdx do
+  for (oleanPath, i) in oleans.zipWithIndex do
     if visited.contains oleanPath then
       IO.eprintln s!"({i + 1} / {oleans.size}) Skipping already loaded {oleanPath}."
       continue
