@@ -172,6 +172,7 @@ Evaluate a `Syntax` into a `TacticM` tactic, and run it in the current `ProofSna
 -/
 def runSyntax (p : ProofSnapshot) (t : Syntax) : IO ProofSnapshot :=
   Prod.snd <$> p.runTacticM (evalTactic t)
+  -- Prod.snd <$> p.runTacticM (do evalTactic t; Tactic.pruneSolvedGoals)
 
 /--
 Parse a string into a `Syntax`, evaluate it as a `TacticM` tactic,

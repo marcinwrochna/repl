@@ -45,6 +45,13 @@ structure ProofStep where
   tactic : String
 deriving ToJson, FromJson
 
+/-- Verify a proof. -/
+structure VerifyProof where
+  envAsked : Nat
+  envProved : Nat
+  constName: String
+deriving ToJson, FromJson
+
 /-- Line and column information for error messages and sorries. -/
 structure Pos where
   line : Nat
@@ -174,6 +181,13 @@ instance : ToJson ProofStepResponse where
     Json.nonemptyList "traces" r.traces,
     [("proofStatus", r.proofStatus)]
   ]
+
+/--
+A response to verifyProof.
+-/
+structure VerifyProofResponse where
+  axioms: List String
+deriving ToJson, FromJson
 
 /-- Json wrapper for an error. -/
 structure Error where

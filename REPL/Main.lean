@@ -184,7 +184,8 @@ def getProofStatus (proofState : ProofSnapshot) : M m String := do
     | [] =>
       let res := proofState.runMetaM do
         match proofState.rootGoals with
-        | [goalId] =>
+        | [goalId] => do
+          -- instantiateMVarDeclMVars goalId
           match proofState.metaState.mctx.getExprAssignmentCore? goalId with
           | none => return "Error: Goal not assigned"
           | some pf => do
@@ -405,6 +406,56 @@ def runProofStep (s : ProofStep) : M IO (ProofStepResponse ⊕ Error) := do
     catch ex =>
       return .inr ⟨"Lean error:\n" ++ ex.toString⟩
 
+def AllowedAxioms := [`propext, `Quot.sound, `Classical.choice]
+
+abbrev DummyEnvM := StateRefT Environment IO
+
+instance : MonadEnv DummyEnvM where
+  getEnv := return (← get)
+  modifyEnv f := modify fun env => f env
+
+def runDummyEnvM {α} (env: Environment) (m : DummyEnvM α) : IO α := do
+  return (← m.run env).fst
+
+def verifyProof (s : VerifyProof) : M IO (VerifyProofResponse ⊕ Error) := do
+  let stateAsked ← match (← get).cmdStates[s.envAsked]? with
+  | none => return .inr ⟨"Unknown environment."⟩
+  | some st => pure st
+  let stateProved ← match (← get).cmdStates[s.envProved]? with
+  | none => return .inr ⟨"Unknown environment."⟩
+  | some st => pure st
+
+  let envAsked: Environment := stateAsked.cmdState.env
+  let envProved: Environment := stateProved.cmdState.env
+
+  let mut constName := s.constName.toName
+  let cAsked ← match envAsked.checked.get.find? constName with
+  | some c => pure (some c)
+  | none => do
+    constName := (Lean.Name.appendCore ("_private".toName.num 0) constName)
+    -- TODO use `privateToUserName` instead somehow? or resolveGlobalConstNoOverload?
+    match envAsked.checked.get.find? constName with
+    | some c => pure (some c)
+    | none => return .inr ⟨s.constName ++ " is not a constant in envAsked."⟩
+  let cProved ← match envProved.checked.get.find? constName with
+  | some c => pure (some c)
+  | none => return .inr ⟨s.constName ++ " is not a constant in envProved."⟩
+
+  let Lean.ConstantInfo.thmInfo tAsked := cAsked | return .inr ⟨"Not a theorem."⟩
+  let Lean.ConstantInfo.thmInfo tProved := cProved |  return  .inr ⟨"Not a theorem."⟩
+  if tAsked.type != tProved.type then
+    return .inr ⟨s.constName ++ " is not the same type in the two environments."⟩
+  if tAsked != {tProved  with value := tAsked.value} then
+    return .inr ⟨s.constName ++ " is not the same in the two environments."⟩
+
+  -- let (_,s') := (Lean.Elab.Command.CollectAxioms.collect newConstName).run envProved' |>.run {}
+  -- let axioms: Array Name := s'.axioms
+  let axioms: Array Name ← runDummyEnvM envProved (collectAxioms constName)
+  for a in axioms do
+    if !AllowedAxioms.contains a then
+      return .inr ⟨s.constName ++ " uses the axiom " ++ toString a ++ ", which is not allowed."⟩
+  return .inl { axioms := axioms.toList.map (·.toString) }
+
 end REPL
 
 open REPL
@@ -431,6 +482,7 @@ inductive Input
 | unpickleEnvironment : REPL.UnpickleEnvironment → Input
 | pickleProofSnapshot : REPL.PickleProofState → Input
 | unpickleProofSnapshot : REPL.UnpickleProofState → Input
+| verifyProof: REPL.VerifyProof → Input
 
 /-- Parse a user input string to an input command. -/
 def parse (query : String) : IO Input := do
@@ -452,6 +504,8 @@ def parse (query : String) : IO Input := do
     | .ok (r : REPL.Command) => return .command r
     | .error _ => match fromJson? j with
     | .ok (r : REPL.File) => return .file r
+    | .error _ => match fromJson? j with
+    | .ok (r : REPL.VerifyProof) => return .verifyProof r
     | .error e => throw <| IO.userError <| toString <| toJson <|
         (⟨"Could not parse as a valid JSON command:\n" ++ e⟩ : Error)
 
@@ -477,6 +531,7 @@ where loop : M IO Unit := do
   | .unpickleEnvironment r => return toJson (← unpickleCommandSnapshot r)
   | .pickleProofSnapshot r => return toJson (← pickleProofSnapshot r)
   | .unpickleProofSnapshot r => return toJson (← unpickleProofSnapshot r)
+  | .verifyProof r => return toJson (← verifyProof r)
   printFlush "\n" -- easier to parse the output if there are blank lines
   loop
 
