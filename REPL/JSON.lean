@@ -21,6 +21,7 @@ structure CommandOptions where
   infotree : Option String := none
   syntaxTrees: Option Bool := none
   constants: Option Bool := none
+  modulePaths: Option Bool := none
 
 
 /-- Run Lean commands.
@@ -126,6 +127,12 @@ def Tactic.of (goals tactic : String) (pos endPos : Lean.Position) (proofState :
     proofState,
     usedConstants }
 
+structure ModulePath where
+  name: Name
+  oleanPath: Option String
+  leanPath: Option String
+deriving ToJson, FromJson
+
 /--
 A response to a Lean command.
 `env` can be used in later calls, to build on the stored environment.
@@ -135,6 +142,7 @@ structure CommandResponse where
   messages : List Message := []
   sorries : List Sorry := []
   tactics : List Tactic := []
+  modulePaths: List ModulePath := []
   infotree : Option Json := none
   syntaxTrees : Option Json := none
   constants : Option Json := none
@@ -154,6 +162,7 @@ instance : ToJson CommandResponse where
     Json.nonemptyList "messages" r.messages,
     Json.nonemptyList "sorries" r.sorries,
     Json.nonemptyList "tactics" r.tactics,
+    Json.nonemptyList "modulePaths" r.modulePaths,
     Json.ifSome "infotree" r.infotree,
     Json.ifSome "syntaxTrees" r.syntaxTrees,
     Json.ifSome "constants" r.constants,

@@ -170,6 +170,21 @@ private def abstractAllLambdaFVars (e : Expr) : MetaM Expr := do
     e' ← Meta.mkLambdaFVars fvars e'
   return e'
 
+
+def collectModulePaths (header: EnvironmentHeader) : IO (List REPL.ModulePath) := do
+  let sp ← Lean.searchPathRef.get
+  let mut modules := #[]
+  for name in header.moduleNames do
+    if name.isInternal then
+      continue
+    modules := modules.push {
+      name := name,
+      oleanPath := (← sp.findWithExt "olean" name).map toString,
+      leanPath := (← sp.findWithExt "lean" name).map toString
+    }
+  return modules.toList
+
+
 /--
 Evaluates the current status of a proof, returning a string description.
 Main states include:
@@ -340,6 +355,11 @@ def runCommand (s : Command) (fileName? : Option String := none) : M IO (Command
     then tactics trees initialCmdState.env
     else pure []
 
+  -- Retrieve modules, if this was the first command (the only one that can import).
+  let modulePaths ← if s.env.isSome && s.modulePaths.isEqSome true
+    then pure []
+    else collectModulePaths cmdState.env.header
+
   -- Retrieve infotrees, or some subset of them, if requested.
   let jsonTrees := match s.infotree with
   | some "full" => trees
@@ -366,7 +386,7 @@ def runCommand (s : Command) (fileName? : Option String := none) : M IO (Command
     else
       none
 
-  -- Retrieve constants (theorems, defs, ..) if requested.
+  -- Retrieve new constants (theorems, defs, ..) if requested.
   let constants ←
     if s.constants.isEqSome true then do
       let initialConstMap := initialCmdState?.elim {} (fun cmdState => cmdState.env.constants)
@@ -381,6 +401,7 @@ def runCommand (s : Command) (fileName? : Option String := none) : M IO (Command
       messages,
       sorries,
       tactics,
+      modulePaths,
       infotree,
       syntaxTrees,
       constants }
@@ -501,11 +522,11 @@ def parse (query : String) : IO Input := do
     | .error _ => match fromJson? j with
     | .ok (r : REPL.UnpickleProofState) => return .unpickleProofSnapshot r
     | .error _ => match fromJson? j with
+    | .ok (r : REPL.VerifyProof) => return .verifyProof r
+    | .error _ => match fromJson? j with
     | .ok (r : REPL.Command) => return .command r
     | .error _ => match fromJson? j with
     | .ok (r : REPL.File) => return .file r
-    | .error _ => match fromJson? j with
-    | .ok (r : REPL.VerifyProof) => return .verifyProof r
     | .error e => throw <| IO.userError <| toString <| toJson <|
         (⟨"Could not parse as a valid JSON command:\n" ++ e⟩ : Error)
 

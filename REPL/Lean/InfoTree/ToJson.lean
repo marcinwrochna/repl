@@ -109,9 +109,11 @@ structure DeclarationInfo where
 
   isDefLike: Bool -- Is it theorem/abbrev/definition/opaque/instance/example rather than axiom/inductive/classInductive/structure.
 
-  id: Name  -- ident as used in the declaration (TODO unscoped?).
+  id: Name  -- ident as used in the declaration syntax.
   -- May be .anonymous like for 'example' declarations.
   -- Does not include universe parameters like in 'foo.{u,v}'.
+
+  fullName: Option Name -- The full name of the declaration, including containing namespaces.
 
   declRange: Option String.Range -- Range of the whole declaration, including modifiers and id.
 
@@ -187,7 +189,9 @@ def getDeclInfo (info : CommandInfo) (ctx : ContextInfo) : IO DeclarationInfo :=
   -- let declId ← getDeclId stx
   let declIdNode := declNode.getArgs.find? (·.isOfKind ``Lean.Parser.Command.declId)
   -- Skip universe parameters.
-  let id := declIdNode.elim Lean.Name.anonymous (fun x => (x.getArg 0).getId)
+  let identSyntax := declIdNode.map (fun x => (x.getArg 0))
+  let id := identSyntax.elim Lean.Name.anonymous (·.getId)
+  let fullName ← identSyntax.mapM (fun n => ctx.runMetaM {} (realizeGlobalConstNoOverload n))
 
   -- Signature/type:
   let declSigNode := declNode.getArgs.find? (fun x => x.isOfKind ``Lean.Parser.Command.declSig || x.isOfKind ``Lean.Parser.Command.optDeclSig)
@@ -212,6 +216,7 @@ def getDeclInfo (info : CommandInfo) (ctx : ContextInfo) : IO DeclarationInfo :=
     kind := kind
     isDefLike := Lean.Elab.Command.isDefLike declNode
     id := id
+    fullName := fullName
     declRange := declRange
     typeByteRange := (declSigType.getD Syntax.missing).getRange?
     valByteRange := (declVal.getD Syntax.missing).getRange?
@@ -229,22 +234,42 @@ def CommandInfo.toJson (info : CommandInfo) (ctx : ContextInfo) : IO CommandInfo
     declaration := declaration,
     stx := ← info.stx.toJson ctx {} }
 
+structure ConstantRef where
+  fullName : Name
+  moduleName : Option Name  -- none means current module.
+deriving ToJson
+
+def Constant.toJson (fullName: Name) (_levels: List Level) (ctx : ContextInfo) : IO ConstantRef := do
+  let moduleName := if let some modIdx := ctx.env.getModuleIdxFor? fullName then
+    some ctx.env.header.moduleNames[modIdx.toNat]!
+  else
+    none -- ctx.env.header.mainModule
+  return { fullName, moduleName }
+
 structure TermInfo.Json where
   elaborator : Option Name
   stx : Syntax.Json
   expectedType? : Option String
   expr : String
   isBinder : Bool
+  const: Option ConstantRef -- If the term is a constant, info about what exactly it refers to.
 deriving ToJson
 
 def TermInfo.toJson (info : TermInfo) (ctx : ContextInfo) : IO TermInfo.Json := do
+  let const ← if let .const name us := info.expr then
+    pure (some (← Constant.toJson name us ctx))
+  else
+    pure none
   return {
     elaborator := match info.elaborator with | .anonymous => none | n => some n,
     stx := ← info.stx.toJson ctx info.lctx,
     expectedType? := ← info.expectedType?.mapM fun ty => do
       pure (← ctx.ppExpr info.lctx ty).pretty
     expr := (← ctx.ppExpr info.lctx info.expr).pretty
-    isBinder := info.isBinder }
+    isBinder := info.isBinder
+    const
+  }
+
 
 structure PartialTermInfo.Json where
   elaborator : Option Name
