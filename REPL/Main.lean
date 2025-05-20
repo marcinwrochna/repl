@@ -171,20 +171,6 @@ private def abstractAllLambdaFVars (e : Expr) : MetaM Expr := do
   return e'
 
 
-def collectModulePaths (header: EnvironmentHeader) : IO (List REPL.ModulePath) := do
-  let sp ← Lean.searchPathRef.get
-  let mut modules := #[]
-  for name in header.moduleNames do
-    if name.isInternal then
-      continue
-    modules := modules.push {
-      name := name,
-      oleanPath := (← sp.findWithExt "olean" name).map toString,
-      leanPath := (← sp.findWithExt "lean" name).map toString
-    }
-  return modules.toList
-
-
 /--
 Evaluates the current status of a proof, returning a string description.
 Main states include:
@@ -355,11 +341,6 @@ def runCommand (s : Command) (fileName? : Option String := none) : M IO (Command
     then tactics trees initialCmdState.env
     else pure []
 
-  -- Retrieve modules, if this was the first command (the only one that can import).
-  let modulePaths ← if s.env.isSome && s.modulePaths.isEqSome true
-    then pure []
-    else collectModulePaths cmdState.env.header
-
   -- Retrieve infotrees, or some subset of them, if requested.
   let jsonTrees := match s.infotree with
   | some "full" => trees
@@ -386,25 +367,14 @@ def runCommand (s : Command) (fileName? : Option String := none) : M IO (Command
     else
       none
 
-  -- Retrieve new constants (theorems, defs, ..) if requested.
-  let constants ←
-    if s.constants.isEqSome true then do
-      let initialConstMap := initialCmdState?.elim {} (fun cmdState => cmdState.env.constants)
-      pure $ some $ Lean.toJson $ ← (collectNewConstantsPerTree trees initialConstMap)
-    else do
-      pure none
-  -- let ctxInfo := { env := cmdState.env, fileMap := inputCtx.fileMap, ngen := cmdState.ngen }
-  -- ctxInfo.runCoreM'
 
   return .inl
     { env,
       messages,
       sorries,
       tactics,
-      modulePaths,
       infotree,
-      syntaxTrees,
-      constants }
+      syntaxTrees }
 
 def processFile (s : File) : M IO (CommandResponse ⊕ Error) := do
   try
