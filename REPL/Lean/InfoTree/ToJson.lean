@@ -68,6 +68,7 @@ def _root_.Lean.Syntax.toJson (stx : Syntax) (ctx : ContextInfo) (lctx : LocalCo
 
 structure TacticInfo.Json where
   name : Option Name
+  elaborator: Option Name
   stx : Syntax.Json
   goalsBefore : List String
   goalsAfter : List String
@@ -77,6 +78,7 @@ deriving ToJson
 def TacticInfo.toJson (i : TacticInfo) (ctx : ContextInfo) : IO TacticInfo.Json := do
   return {
     name := i.name?
+    elaborator := match i.elaborator with | .anonymous => none | n => some n,
     stx :=
     { pp := Format.pretty (← i.pp ctx),
       raw := cutDepth i.stx 2,
@@ -158,6 +160,14 @@ deriving ToJson
 def MacroExpansionInfo.toJson (info : MacroExpansionInfo) (ctx : ContextInfo) : IO MacroExpansionInfo.Json := do
   return { stx := ← info.stx.toJson ctx info.lctx }
 
+structure CustomInfo.Json where
+  typeName : Name
+  stx: Syntax.Json
+deriving ToJson
+
+def CustomInfo.toJson (info : CustomInfo) (ctx : ContextInfo) : IO CustomInfo.Json := do
+  return { typeName := info.value.typeName, stx := ← info.stx.toJson ctx {} }
+
 structure InfoTree.HoleJson where
   goalState : String
 deriving ToJson
@@ -173,6 +183,7 @@ partial def InfoTree.toJson (t : InfoTree) (ctx? : Option ContextInfo) : IO Json
       | .ofCommandInfo        info => some <$> (do pure <| Lean.toJson (← info.toJson ctx))
       | .ofTacticInfo         info => some <$> (do pure <| Lean.toJson (← info.toJson ctx))
       | .ofMacroExpansionInfo info => some <$> (do pure <| Lean.toJson (← info.toJson ctx))
+      | .ofCustomInfo         info => some <$> (do pure <| Lean.toJson (← info.toJson ctx))
       | _                   => pure none
       return Lean.toJson (InfoTreeNode.mk info.kind node (← children.toList.mapM fun t' => t'.toJson ctx))
     else throw <| IO.userError "No `ContextInfo` available."
