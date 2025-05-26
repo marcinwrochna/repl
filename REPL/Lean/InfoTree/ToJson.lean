@@ -129,12 +129,23 @@ def TermInfo.toJson (info : TermInfo) (ctx : ContextInfo) : IO TermInfo.Json := 
     pure (some (← Constant.toJson name us ctx))
   else
     pure none
+  let expr ← do
+    -- Workaround for the fact that we can't pretty-print Prod.fst and Prod.snd
+    -- in the module that defines pretty-printing options for them.
+    let manual: Option String := match info.expr with
+      | .const `Prod.fst _ => some "Prod.fst"
+      | .const `Prod.snd _ => some "Prod.snd"
+      | _ => none
+    if ctx.currNamespace == `Prod.PrettyPrinting && manual.isSome then
+      pure manual.get!
+    else
+      pure (← ctx.ppExpr info.lctx info.expr).pretty
   return {
     elaborator := match info.elaborator with | .anonymous => none | n => some n,
     stx := ← info.stx.toJson ctx info.lctx,
     expectedType? := ← info.expectedType?.mapM fun ty => do
       pure (← ctx.ppExpr info.lctx ty).pretty
-    expr := (← ctx.ppExpr info.lctx info.expr).pretty
+    expr := expr
     isBinder := info.isBinder
     const
   }
