@@ -14,6 +14,7 @@ structure CorpusOptions where
   width: Nat := Std.Format.defWidth
   trustLevel: UInt32 := 1
   openDecls: List OpenDecl := []
+  deps: Bool := false
 
 
 namespace Cli
@@ -49,12 +50,14 @@ def corpusLongOption : (opt : String) → CliM PUnit
   | "--width"   => do let w ← takeOptionArgNat "--width" "width" ; modifyThe CorpusOptions ({· with width := w })
   | "--trust"   => do let t ← takeOptionArgUint32 "--trust" "trustLevel"; modifyThe CorpusOptions ({· with trustLevel := t })
   | "--open"    => do let o ← takeOptionArg "--open" "namespace"; addOpenDecl' o
+  | "--deps"    => modifyThe CorpusOptions ({· with deps := true })
   | opt =>  throw <| IO.userError s!"Unknown option: {opt}"
 
 def corpusShortOption : (opt : Char) → CliM PUnit
   | 'w' => do let w ← takeOptionArgNat "-w" "width"; modifyThe CorpusOptions ({· with width := w })
   | 't' => do let t ← takeOptionArgUint32 "-t" "trustLevel"; modifyThe CorpusOptions ({· with trustLevel := t })
   | 'o' => do let o ← takeOptionArg "-o" "namespace"; addOpenDecl' o
+  | 'd' => modifyThe CorpusOptions ({· with deps := true })
   | opt => throw <| IO.userError s!"Unknown option: -{opt}"
 
 def corpusOption :=
@@ -198,11 +201,17 @@ unsafe def corpusMain (cOpts: CorpusOptions) : IO Unit := do
   initSearchPath (← findSysroot)
   let searchPath ← searchPathRef.get
 
+  let oleans: Array System.FilePath ←
+    if cOpts.deps then
+      searchPath.findAllWithExt "olean"
+    else do
+      let sp : SearchPath := [System.mkFilePath [".lake", "build", "lib", "lean"]]
+      sp.findAllWithExt "olean"
+  -- TODO add option to exclude Init, Lake, Lean, Std, Qq, ProofWidget, Batteries; Mathlib.
+
+
   let stdOut ← IO.getStdout
 
-  let oleans: Array System.FilePath ← searchPath.findAllWithExt "olean"
-
-  -- TODO add option to exclude Init, Lake, Lean, Std, Qq, ProofWidget, Batteries; Mathlib.
 
   let mut visited: Array System.FilePath := #[]
 
