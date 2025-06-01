@@ -7,6 +7,7 @@ import REPL.JSON
 import REPL.Frontend
 import REPL.Util.Path
 import REPL.Lean.ContextInfo
+import REPL.Lean.ConstantInfo
 import REPL.Lean.Environment
 import REPL.Lean.InfoTree
 import REPL.Lean.InfoTree.ToJson
@@ -354,6 +355,16 @@ def runCommand (s : Command) (fileName? : Option String := none) : M IO (Command
   else
     pure <| some <| Json.arr (← jsonTrees.toArray.mapM fun t => t.toJson none)
 
+  -- Retrieve new constants (theorems, defs, ..) if requested.
+  let constants ←
+    if s.constants.isEqSome true then do
+      let initialConstMap := initialCmdState?.elim {} (fun cmdState => cmdState.env.constants)
+      pure $ some $ Lean.toJson $ ← (collectNewConstantsPerTree trees initialConstMap)
+    else do
+      pure none
+  -- let ctxInfo := { env := cmdState.env, fileMap := inputCtx.fileMap, ngen := cmdState.ngen }
+  -- ctxInfo.runCoreM'
+
   -- Retrieve the full raw Syntax trees if requested.
   -- (Note that usually it's more useful to access syntax from nodes in infotrees,
   --  as they associate specific syntax to the 'semantic' infotree nodes;
@@ -374,7 +385,8 @@ def runCommand (s : Command) (fileName? : Option String := none) : M IO (Command
       sorries,
       tactics,
       infotree,
-      syntaxTrees }
+      syntaxTrees,
+      constants }
 
 def processFile (s : File) : M IO (CommandResponse ⊕ Error) := do
   try

@@ -1,6 +1,7 @@
 import REPL.Lean.InfoTree
 import REPL.Lean.ContextInfo
 import REPL.Lean.DeclarationInfo
+import REPL.Lean.ConstantInfo
 
 /-!
 # Exporting an `InfoTree` as Json
@@ -15,8 +16,6 @@ instance : ToJson Substring where
 deriving instance ToJson for SourceInfo
 deriving instance ToJson for Syntax.Preresolved
 deriving instance ToJson for Syntax
-
-deriving instance BEq for QuotKind, QuotVal, InductiveVal, ConstantInfo
 
 
 structure InfoTreeNode (α : Type) where

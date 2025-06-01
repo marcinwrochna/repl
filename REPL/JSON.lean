@@ -20,6 +20,7 @@ structure CommandOptions where
   -/
   infotree : Option String := none
   syntaxTrees: Option Bool := none
+  constants: Option Bool := none
 
 
 /-- Run Lean commands.
@@ -137,6 +138,7 @@ structure CommandResponse where
   tactics : List Tactic := []
   infotree : Option Json := none
   syntaxTrees : Option Json := none
+  constants : Option Json := none
 deriving FromJson
 
 def Json.nonemptyList [ToJson α] (k : String) : List α → List (String × Json)
@@ -155,6 +157,7 @@ instance : ToJson CommandResponse where
     Json.nonemptyList "tactics" r.tactics,
     Json.ifSome "infotree" r.infotree,
     Json.ifSome "syntaxTrees" r.syntaxTrees,
+    Json.ifSome "constants" r.constants,
   ]
 
 /--

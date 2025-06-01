@@ -1,5 +1,4 @@
-import REPL.Lean.InfoTree
-import REPL.Lean.ContextInfo
+import Lean
 
 namespace Lean.Elab
 
