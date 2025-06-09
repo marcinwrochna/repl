@@ -1,5 +1,6 @@
 
 import Lean.Data.Json.Printer
+import Lean.Data.Json.Stream
 import Lean.Elab.Open
 import Lean.Elab.Command
 import Lean.Server.References
@@ -144,6 +145,61 @@ def getConstInfo (const: ConstantInfo) (pp : Expr → IO String) (ctx : Elab.Con
     return none
 
 
+unsafe def processModule
+  (i : Nat) (n : Nat)
+  (oleanPath : System.FilePath)
+  (searchPath: SearchPath)
+  (srcSearchPath: SearchPath)
+  (cOpts: CorpusOptions)
+  (atomicStdOut: Std.Mutex IO.FS.Stream)
+: IO Unit := do
+
+  let some moduleName ← searchModuleNameOfFileName oleanPath searchPath
+    | throw <| IO.userError s!"failed to find module name for {oleanPath}"
+
+  let (module, _region) ← readModuleData oleanPath
+  IO.eprintln s!"({i + 1} / {n}) Loading {moduleName} {oleanPath} with {module.constants.size} entries"
+  let imports := module.imports.filterMap (fun m => if m.runtimeOnly then (some m.module) else none)
+  let leanPath ← (if moduleName.toString == "LakeMain"
+                  then pure $ System.FilePath.mk ""
+                  else findLean srcSearchPath moduleName)
+  let leanContents ← if (← System.FilePath.pathExists leanPath) then IO.FS.readFile leanPath else pure ""
+  let inputCtx := Parser.mkInputContext leanContents leanPath.toString
+
+  let opts : Options := {}
+  -- withImportModules might need (level := OLeanLevel.private) in some future Lean version.
+  let moduleInfo ← withImportModules
+      (trustLevel := cOpts.trustLevel) #[⟨moduleName, false⟩] opts fun env => do
+    let ppCtx : PPContext := { env, opts, currNamespace := Name.anonymous, openDecls := cOpts.openDecls }
+    let ctx : Elab.ContextInfo := {
+      env := env,
+      fileMap := inputCtx.fileMap,
+      mctx := {},
+      options := opts,
+      currNamespace := Name.anonymous,
+      openDecls := cOpts.openDecls,
+      ngen := {},
+    }
+    let pp := ppExpr' ppCtx cOpts
+    -- let cmdState := Elab.Command.mkState env {} opts
+    let constInfos ← module.constants.filterMapM fun c => getConstInfo c pp ctx
+    pure {
+      name := moduleName,
+      imports := imports.toList,
+      oleanPath,
+      leanPath,
+      constants := RBMap.fromArray constInfos compare
+      : ModuleInfo
+    }
+
+
+  atomicStdOut.atomically fun stdOut' => do
+    let stdOut ← stdOut'.get
+    IO.FS.Stream.writeJson stdOut (toJson moduleInfo)
+    stdOut.putStrLn ""
+    stdOut.flush
+
+
 unsafe def corpusMain (cOpts: CorpusOptions) : IO Unit := do
   let (elanInstall?, leanInstall?, lakeInstall?) ← Lake.findInstall?
   let some lakeInstall := lakeInstall? | throw <| IO.userError "Lake installation not found"
@@ -164,10 +220,10 @@ unsafe def corpusMain (cOpts: CorpusOptions) : IO Unit := do
   -- TODO add option to exclude Init, Lake, Lean, Std, Qq, ProofWidget, Batteries; Mathlib.
 
 
-  let stdOut ← IO.getStdout
-
+  let atomicStdOut ← Std.Mutex.new (← IO.getStdout)
 
   let mut visited: Array System.FilePath := #[]
+  let mut tasks: List (Task (Except IO.Error Unit)) := []
 
   for (oleanPath, i) in oleans.zipIdx do
     if visited.contains oleanPath then
@@ -175,47 +231,21 @@ unsafe def corpusMain (cOpts: CorpusOptions) : IO Unit := do
       continue
     visited := visited.push oleanPath
 
-    let some moduleName ← searchModuleNameOfFileName oleanPath searchPath
-      | throw <| IO.userError s!"failed to find module name for {oleanPath}"
+    -- Synchronized:
+    -- processModule i oleans.size oleanPath searchPath srcSearchPath cOpts
 
-    let (module, _region) ← readModuleData oleanPath
-    IO.eprintln s!"({i + 1} / {oleans.size}) Loading {moduleName} {oleanPath} with {module.constants.size} entries"
-    let imports := module.imports.filterMap (fun m => if m.runtimeOnly then (some m.module) else none)
-    let leanPath ← (if moduleName.toString == "LakeMain"
-                    then pure $ System.FilePath.mk ""
-                    else findLean srcSearchPath moduleName)
-    let leanContents ← if (← System.FilePath.pathExists leanPath) then IO.FS.readFile leanPath else pure ""
-    let inputCtx := Parser.mkInputContext leanContents leanPath.toString
+    -- Parallel:
+    let task ← (processModule i oleans.size oleanPath searchPath srcSearchPath cOpts atomicStdOut).asTask
+    tasks := task :: tasks
 
-    let opts : Options := {}
-    -- withImportModules might need (level := OLeanLevel.private) in some future Lean version.
-    let moduleInfo ← withImportModules
-        (trustLevel := cOpts.trustLevel) #[⟨moduleName, false⟩] opts fun env => do
-      let ppCtx : PPContext := { env, opts, currNamespace := Name.anonymous, openDecls := cOpts.openDecls }
-      let ctx : Elab.ContextInfo := {
-        env := env,
-        fileMap := inputCtx.fileMap,
-        mctx := {},
-        options := opts,
-        currNamespace := Name.anonymous,
-        openDecls := cOpts.openDecls,
-        ngen := {},
-      }
-      let pp := ppExpr' ppCtx cOpts
-      -- let cmdState := Elab.Command.mkState env {} opts
-      let constInfos ← module.constants.filterMapM fun c => getConstInfo c pp ctx
-      let moduleInfo : ModuleInfo := {
-        name := moduleName,
-        imports := imports.toList,
-        oleanPath,
-        leanPath,
-        constants := RBMap.fromArray constInfos compare
-      }
-      pure moduleInfo
-
-    IO.FS.Stream.writeJson stdOut (toJson moduleInfo)
-    stdOut.putStrLn ""
-    stdOut.flush
+  let results? := (← IO.mapTasks (fun results => pure results) tasks).get
+  match results? with
+  | .error e => throw e
+  | .ok results =>
+    results.forM fun result =>
+      match result with
+      | .error e => throw e
+      | .ok () => pure ()
 
   IO.eprintln s!"Done!"
 
