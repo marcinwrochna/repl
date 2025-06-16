@@ -21,6 +21,7 @@ structure CommandOptions where
   infotree : Option String := none
   syntaxTrees: Option Bool := none
   constants: Option Bool := none
+  allowRecursion: Option Bool := none
 
 
 /-- Run Lean commands.

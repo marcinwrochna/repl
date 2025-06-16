@@ -334,7 +334,16 @@ def runCommand (s : Command) (fileName? : Option String := none) : M IO (Command
   let trees := cmdState.infoState.trees.toList
   -- For debugging purposes, sometimes we print out the trees here:
   -- trees.forM fun t => do IO.println (← t.format)
-  let sorries ← sorries trees initialCmdState.env none
+
+  -- If recursion is not allowed, use the initialCmdState.env (before the command was run);
+  -- if enabled, this allows using named theorems in their own proofs (because we use
+  -- an environment that has `theorem foo := by sorry`, so e.g. `exact?` will find `foo`)
+  -- if disabled, this doesn't allow using definitions introduced in the same command.
+  -- Using `example` instead of `theorem` with allowRecursion enabled seems to work well.
+  let tacticEnv := if s.allowRecursion.isEqSome true
+    then none
+    else some initialCmdState.env
+  let sorries ← sorries trees tacticEnv none
   let sorries ← if s.rootGoals.isEqSome true
     then pure (sorries ++ (← collectRootGoalsAsSorries trees initialCmdState.env))
     else pure sorries
