@@ -145,7 +145,13 @@ def getDeclInfo (info : CommandInfo) (ctx : ContextInfo) : IO DeclarationInfo :=
   let kind := match declNode.getKind with | .str _ s => s | _ => ""  --
 
   -- Id/name:
-  let declIdNode? := declNode.getArgs.find? (·.isOfKind ``Lean.Parser.Command.declId)
+  -- Find `declId` or `optional(declId)` node.
+  let declIdNode? := declNode.getArgs.findSome? fun arg =>
+    if (arg.isOfKind ``Lean.Parser.Command.declId) then
+      some arg
+    else match arg.getOptional? with
+    | some a => if (a.isOfKind ``Lean.Parser.Command.declId) then some a else none
+    | none => none
   -- Skip universe parameters.
   let identSyntax? := declIdNode?.map (fun x => (x.getArg 0))
   let id := identSyntax?.elim Lean.Name.anonymous (·.getId)
